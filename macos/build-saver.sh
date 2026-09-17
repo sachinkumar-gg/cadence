@@ -69,6 +69,10 @@ mkdir -p "${USER_SAVER_DIR}"
 rm -rf "${USER_SAVER_DIR}/${BUNDLE_NAME}"
 cp -R "${OUTPUT_DIR}/${BUNDLE_NAME}" "${USER_SAVER_DIR}/"
 
+# Configure macOS to select Cadence as the active screen saver
+defaults -currentHost write com.apple.screensaver moduleDict -dict moduleName "Cadence" path "${USER_SAVER_DIR}/${BUNDLE_NAME}" type 0 2>/dev/null || true
+
+
 echo ""
 echo "=================================================="
 echo "✅ Successfully built and installed Cadence.saver!"
