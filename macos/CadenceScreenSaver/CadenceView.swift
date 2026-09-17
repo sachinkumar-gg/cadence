@@ -85,8 +85,9 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         webView = WKWebView(frame: self.bounds, configuration: config)
         webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
-        webView.setValue(false, forKey: "drawsBackground")
+        webView.setValue(true, forKey: "drawsBackground")
         webView.underPageBackgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
+
 
         // Disable scrolling bounce
         if let scrollView = webView.enclosingScrollView {
@@ -119,24 +120,24 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     private func loadWebApp() {
         let bundle = Bundle(for: type(of: self))
-        let directUrl = bundle.bundleURL.appendingPathComponent("Contents/Resources/dist/index.html")
+        NSLog("CADENCE: Checking bundle at \(bundle.bundlePath)")
 
-        let targetUrl: URL
-        if FileManager.default.fileExists(atPath: directUrl.path) {
-            targetUrl = directUrl
-        } else if let resourceUrl = bundle.url(forResource: "index", withExtension: "html", subdirectory: "dist") {
-            targetUrl = resourceUrl
-        } else if let rootUrl = bundle.url(forResource: "index", withExtension: "html") {
-            targetUrl = rootUrl
-        } else {
-            targetUrl = URL(string: "http://127.0.0.1:5173/")!
+        guard let htmlURL = bundle.url(forResource: "index", withExtension: "html", subdirectory: "dist") ?? {
+            let directUrl = bundle.bundleURL.appendingPathComponent("Contents/Resources/dist/index.html")
+            if FileManager.default.fileExists(atPath: directUrl.path) { return directUrl }
+            let fallbackUrl = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Screen Savers/Cadence.saver/Contents/Resources/dist/index.html")
+            if FileManager.default.fileExists(atPath: fallbackUrl.path) { return fallbackUrl }
+            return nil
+        }() else {
+            NSLog("CADENCE: FATAL — index.html not found in bundle at \(bundle.bundlePath)")
+            return
         }
 
-        NSLog("[Cadence] Loading web surface from: \(targetUrl.path)")
-        if targetUrl.isFileURL {
-            webView.loadFileURL(targetUrl, allowingReadAccessTo: bundle.bundleURL)
+        NSLog("CADENCE: Loading from \(htmlURL.path)")
+        if htmlURL.isFileURL {
+            webView.loadFileURL(htmlURL, allowingReadAccessTo: bundle.bundleURL)
         } else {
-            webView.load(URLRequest(url: targetUrl))
+            webView.load(URLRequest(url: htmlURL))
         }
     }
 
@@ -179,10 +180,14 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         super.stopAnimation()
     }
 
+    public override func draw(_ dirtyRect: NSRect) {
+        // Intentionally empty: Do NOT call super.draw(dirtyRect) which fills the view with black!
+        // WKWebView is a layer-backed view that renders its own surface.
+    }
+
     public override func animateOneFrame() {
-        // Essential: Keep the view layer dirty so runningboardd and macOS WindowServer
-        // know this view is actively rendering and do NOT suspend the WebContent process.
-        self.needsDisplay = true
+        // WKWebView renders via its own internal 60fps display link.
+        // Do NOT call self.needsDisplay = true, which triggers ScreenSaverView's black drawRect.
     }
 
     public override var hasConfigureSheet: Bool {
@@ -192,4 +197,5 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     public override var configureSheet: NSWindow? {
         return nil
     }
+
 }
