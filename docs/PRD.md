@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD)
 
-## Project Name: Jinx (Open-Source "Verci" Alternative for macOS)
+## Project Name: Cadence (Open-Source "Verci" Alternative for macOS)
 **Status:** Draft / Active Ideation  
 **Platform:** macOS (Apple Silicon & Intel)  
 **Target Audience:** Music lovers, aesthetics enthusiasts, desktop customizers, audiophiles  
@@ -8,9 +8,9 @@
 ---
 
 ## 1. Executive Summary & Vision
-**Jinx** is an open-source, ultra-fluid, kinetic lyrics visualizer and wallpaper engine for macOS. Inspired by closed-source and paid apps like *Verci*, Jinx transforms real-time music playback from **Spotify** and **Apple Music** into an expressive, kinetic typography show on the user's desktop, lock screen, or full-screen OLED ambient display.
+**Cadence** is an open-source, ultra-fluid, kinetic lyrics visualizer and wallpaper engine for macOS. Inspired by closed-source and paid apps like *Verci*, Cadence transforms real-time music playback from **Spotify** and **Apple Music** into an expressive, kinetic typography show on the user's desktop, lock screen, or full-screen OLED ambient display.
 
-Instead of static, generic karaoke text, Jinx crafts dynamic, lively typography layouts: words bounce, tilt, scale up on vocal emphasis, get accented with contextual emojis, sit inside styled pill badges, and curve organically across a pitch-black background accompanied by music-reactive ambient corner glows.
+Instead of static, generic karaoke text, Cadence crafts dynamic, lively typography layouts: words bounce, tilt, scale up on vocal emphasis, get accented with contextual emojis, sit inside styled pill badges, and curve organically across a pitch-black background accompanied by music-reactive ambient corner glows.
 
 ---
 

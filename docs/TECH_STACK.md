@@ -1,6 +1,6 @@
 # Technical Stack & Architecture Document
 
-## Project: Jinx (Kinetic Lyrics Visualizer & Ambient Wallpaper)
+## Project: Cadence (Kinetic Lyrics Visualizer & Ambient Wallpaper)
 **Target Platform:** macOS 13.0+ (Ventura, Sonoma, Sequoia)  
 **Architecture:** Apple Silicon (arm64) & Intel (x86_64)  
 
@@ -10,7 +10,7 @@
 
 ```
 +-------------------------------------------------------------------------+
-|                              JINX APP                                   |
+|                              Cadence APP                                |
 +-------------------------------------------------------------------------+
 | [ FRONTEND LAYER ] React 18/19 + Vite + TypeScript                       |
 |   ├── Motion & Physics: Framer Motion (spring curves, layout animations)|

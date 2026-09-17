@@ -1,6 +1,6 @@
 # Tasks & Implementation Roadmap
 
-## Project: Jinx (macOS Kinetic Lyrics & Ambient Visualizer)
+## Project: Cadence (macOS Kinetic Lyrics & Ambient Visualizer)
 **Status:** Ready to Implement  
 **Tracking Board:** Phase 1 through Phase 7  
 
