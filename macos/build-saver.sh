@@ -74,6 +74,7 @@ xattr -cr "${USER_SAVER_DIR}/${BUNDLE_NAME}"
 # Terminate any cached/zombie screen saver host processes
 killall -9 legacyScreenSaver 2>/dev/null || true
 killall -9 ScreenSaverEngine 2>/dev/null || true
+killall -9 com.apple.WebKit.WebContent 2>/dev/null || true
 
 # Configure macOS to select Cadence as the active screen saver
 defaults -currentHost write com.apple.screensaver moduleDict -dict moduleName "Cadence" path "${USER_SAVER_DIR}/${BUNDLE_NAME}" type 0 2>/dev/null || true

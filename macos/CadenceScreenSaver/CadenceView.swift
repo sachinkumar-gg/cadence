@@ -75,32 +75,32 @@ final class CadenceLogHandler: NSObject, WKScriptMessageHandler {
 }
 
 @objc(CadenceView)
-public class CadenceView: ScreenSaverView, WKNavigationDelegate {
-    private var webView: WKWebView!
+public class CadenceView: ScreenSaverView, WKNavigationDelegate, WKUIDelegate {
+    private var webView: WKWebView?
     private var mediaBridge: MediaRemoteBridge?
     private var isConfigured = false
     private var activityToken: NSObjectProtocol?
 
+    // 1. CRITICAL: Disable macOS ScreenSaver gamma fade to black
+    public override class func performGammaFade() -> Bool {
+        return false
+    }
+
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
-        self.animationTimeInterval = 1.0 / 60.0
-        self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
-
-        DispatchQueue.main.async { [weak self] in
-            self?.setupView()
-        }
+        setupCommon()
     }
 
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
+        setupCommon()
+    }
+
+    private func setupCommon() {
         self.animationTimeInterval = 1.0 / 60.0
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
-
-        DispatchQueue.main.async { [weak self] in
-            self?.setupView()
-        }
+        self.autoresizesSubviews = true
     }
 
     deinit {
@@ -108,14 +108,32 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
             ProcessInfo.processInfo.endActivity(token)
         }
         mediaBridge?.stop()
+        mediaBridge = nil
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil
     }
 
     private func preventProcessSuspension() {
         if activityToken == nil {
             activityToken = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated, .idleDisplaySleepDisabled, .latencyCritical],
+                options: [.userInitiated, .idleDisplaySleepDisabled, .latencyCritical, .userInitiatedAllowingIdleSystemSleep],
                 reason: "Cadence 60fps kinetic visualizer active"
             )
+        }
+    }
+
+    // Safe dynamic invocation of private WebKit APIs to disable throttling & occlusion
+    private func setPrivateBool(target: AnyObject, selector: String, value: Bool) {
+        let sel = Selector((selector))
+        if target.responds(to: sel),
+           let method = class_getInstanceMethod(type(of: target), sel) {
+            let imp = method_getImplementation(method)
+            typealias MethodSignature = @convention(c) (AnyObject, Selector, Bool) -> Void
+            let fn = unsafeBitCast(imp, to: MethodSignature.self)
+            fn(target, sel, value)
+            NSLog("CADENCE: Enabled private setting \(selector) = \(value) on \(type(of: target))")
         }
     }
 
@@ -149,11 +167,18 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
             config.defaultWebpagePreferences.allowsContentJavaScript = true
         }
 
-        // 1. Register custom URL scheme handler to bypass all sandboxed file:// restrictions
+        // CRITICAL ANTI-SUSPENSION FIXES FOR macOS SONOMA & SEQUOIA:
+        // 1. Prevent WebKit from suppressing the WebContent process when occluded or in background
+        setPrivateBool(target: config.preferences, selector: "_setPageVisibilityBasedProcessSuppressionEnabled:", value: false)
+        // 2. Prevent WebKit from throttling DOM timers (requestAnimationFrame, setInterval)
+        setPrivateBool(target: config.preferences, selector: "_setDOMTimersThrottlingEnabled:", value: false)
+        setPrivateBool(target: config.preferences, selector: "_setHiddenPageDOMTimerThrottlingEnabled:", value: false)
+
+        // 3. Register custom URL scheme handler to bypass all sandboxed file:// restrictions
         let schemeHandler = CadenceSchemeHandler(distURL: distUrl)
         config.setURLSchemeHandler(schemeHandler, forURLScheme: "cadence")
 
-        // 2. Add JavaScript console log bridge to system NSLog
+        // 4. Add JavaScript console log bridge to system NSLog
         let logHandler = CadenceLogHandler()
         config.userContentController.add(logHandler, name: "cadenceLog")
 
@@ -176,26 +201,40 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         """
         config.userContentController.addUserScript(WKUserScript(source: jsBridge, injectionTime: .atDocumentStart, forMainFrameOnly: false))
 
-        webView = WKWebView(frame: self.bounds, configuration: config)
-        webView.navigationDelegate = self
-        webView.autoresizingMask = [.width, .height]
-        webView.setValue(true, forKey: "drawsBackground")
-        webView.underPageBackgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
+        var initialFrame = self.bounds
+        if initialFrame.width <= 0 || initialFrame.height <= 0 {
+            if let screen = self.window?.screen ?? NSScreen.main {
+                initialFrame = NSRect(origin: .zero, size: screen.frame.size)
+            } else {
+                initialFrame = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+            }
+        }
+
+        let wv = WKWebView(frame: initialFrame, configuration: config)
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        wv.autoresizingMask = [.width, .height]
+        wv.setValue(false, forKey: "drawsBackground")
+        wv.underPageBackgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
+
+        // 5. CRITICAL: Disable window occlusion detection so WebKit treats the screensaver as always visible
+        setPrivateBool(target: wv, selector: "_setWindowOcclusionDetectionEnabled:", value: false)
 
         // Disable scrolling bounce
-        if let scrollView = webView.enclosingScrollView {
+        if let scrollView = wv.enclosingScrollView {
             scrollView.hasVerticalScroller = false
             scrollView.hasHorizontalScroller = false
             scrollView.horizontalScrollElasticity = .none
             scrollView.verticalScrollElasticity = .none
         }
 
-        self.addSubview(webView)
+        self.addSubview(wv)
+        self.webView = wv
 
         // Load via custom origin: full CORS and ES module support without file:// sandbox blocks
         let appURL = URL(string: "cadence://app/index.html")!
         NSLog("CADENCE: Loading URL \(appURL.absoluteString)")
-        webView.load(URLRequest(url: appURL))
+        wv.load(URLRequest(url: appURL))
 
         // Connect native MediaRemote push update engine
         mediaBridge = MediaRemoteBridge { [weak self] payload in
@@ -205,15 +244,33 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        webView?.frame = self.bounds
+        if newSize.width > 0 && newSize.height > 0 {
+            webView?.frame = NSRect(origin: .zero, size: newSize)
+        }
     }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             setupView()
-            webView?.frame = self.bounds
+            if let wv = webView {
+                setPrivateBool(target: wv, selector: "_setWindowOcclusionDetectionEnabled:", value: false)
+                wv.frame = self.bounds
+            }
         }
+    }
+
+    public override func startAnimation() {
+        super.startAnimation()
+        setupView()
+        preventProcessSuspension()
+        if let wv = webView {
+            setPrivateBool(target: wv, selector: "_setWindowOcclusionDetectionEnabled:", value: false)
+        }
+    }
+
+    public override func stopAnimation() {
+        super.stopAnimation()
     }
 
     private func dispatchToWebView(payload: [String: Any]) {
@@ -226,6 +283,19 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.webView?.evaluateJavaScript(js, completionHandler: nil)
         }
+    }
+
+    // MARK: - Input / Focus Overrides (Prevent capturing focus from ScreenSaverEngine)
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        return self
+    }
+
+    public override var acceptsFirstResponder: Bool {
+        return false
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        return false
     }
 
     // MARK: - WKNavigationDelegate
@@ -243,25 +313,19 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         NSLog("CADENCE: WebContent process terminated. Reloading...")
-        webView.reload()
+        let appURL = URL(string: "cadence://app/index.html")!
+        webView.load(URLRequest(url: appURL))
     }
 
-    public override func startAnimation() {
-        super.startAnimation()
-        setupView()
-        preventProcessSuspension()
-    }
-
-    public override func stopAnimation() {
-        super.stopAnimation()
-    }
-
+    // MARK: - Drawing & Animation
     public override func draw(_ dirtyRect: NSRect) {
-        // Intentionally empty: Do NOT call super.draw(dirtyRect) which fills the view with black!
+        // Clear/dark background fill to avoid visual glitches before webview renders
+        NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).setFill()
+        dirtyRect.fill()
     }
 
     public override func animateOneFrame() {
-        // Driven at 60fps by WKWebView internal display link
+        super.animateOneFrame()
     }
 
     public override var hasConfigureSheet: Bool {
