@@ -35,14 +35,14 @@ export const KineticStage: React.FC = () => {
   const getFontSizeClass = () => {
     switch (fontSize) {
       case 'small':
-        return 'text-4xl md:text-6xl';
+        return 'text-3xl md:text-5xl';
       case 'medium':
-        return 'text-5xl md:text-7xl';
+        return 'text-4xl md:text-6xl';
       case 'large':
-        return 'text-6xl md:text-8xl';
+        return 'text-5xl md:text-7xl';
       case 'massive':
       default:
-        return 'text-6xl md:text-8xl lg:text-9xl font-black tracking-tight';
+        return 'text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black tracking-tight';
     }
   };
 

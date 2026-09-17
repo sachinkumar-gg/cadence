@@ -8,6 +8,7 @@ final class MediaRemoteBridge {
     private var isUsingMediaRemote = false
     private var appleScriptTimer: Timer?
     private var fallbackWatchdogTimer: Timer?
+    private var syncTimer: Timer?
     private var lastMediaRemoteTimestamp: TimeInterval = 0
 
     // Dynamic C function pointer types for private MediaRemote.framework
@@ -35,8 +36,8 @@ final class MediaRemoteBridge {
                     set tAlbum to album of current track
                     set tDuration to (duration of current track) / 1000
                     set tPosition to player position
-                    set tArt to artwork url of current track
-                    return "OK|||Spotify|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tPosition & "|||" & pState & "|||" & tArt
+                    set tArtwork to artwork url of current track
+                    return "OK|||Spotify|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tPosition & "|||" & pState & "|||" & tArtwork
                 end if
             end tell
         else if isMusic then
@@ -70,6 +71,8 @@ final class MediaRemoteBridge {
 
     public func stop() {
         DispatchQueue.main.async { [weak self] in
+            self?.syncTimer?.invalidate()
+            self?.syncTimer = nil
             self?.appleScriptTimer?.invalidate()
             self?.appleScriptTimer = nil
             self?.fallbackWatchdogTimer?.invalidate()
@@ -123,6 +126,12 @@ final class MediaRemoteBridge {
 
             // Initial query
             self.queryMediaRemote()
+
+            // Continuous 2.0s sync polling to ensure zero drift
+            self.syncTimer?.invalidate()
+            self.syncTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+                self?.queryMediaRemote()
+            }
         }
     }
 
@@ -150,6 +159,18 @@ final class MediaRemoteBridge {
             let playbackRate = dict["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0
             let isPlaying = playbackRate > 0
 
+            // Accurate elapsed time calculation using kMRMediaRemoteNowPlayingInfoTimestamp
+            var currentPosition = elapsedTime
+            if isPlaying, let infoDate = dict["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date {
+                let delta = Date().timeIntervalSince(infoDate)
+                if delta >= 0 && delta < (duration > 0 ? duration : 3600) {
+                    currentPosition = elapsedTime + (delta * playbackRate)
+                }
+            }
+            if duration > 0 && currentPosition > duration {
+                currentPosition = duration
+            }
+
             var artworkUrl: String? = nil
             if let artworkData = dict["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, !artworkData.isEmpty {
                 let tempPath = NSTemporaryDirectory() + "cadence_art.jpg"
@@ -170,7 +191,7 @@ final class MediaRemoteBridge {
                     "artist": artist,
                     "album": album,
                     "duration": duration,
-                    "position": elapsedTime,
+                    "position": currentPosition,
                     "isPlaying": isPlaying,
                     "artworkUrl": artworkUrl ?? "",
                     "timestamp": Date().timeIntervalSince1970 * 1000

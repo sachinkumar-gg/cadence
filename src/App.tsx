@@ -5,7 +5,6 @@ import { playerBridge } from './services/playerBridge';
 import { CinemaMode } from './components/Modes/CinemaMode';
 import { WallpaperMode } from './components/Modes/WallpaperMode';
 import { LockScreenSimulator } from './components/Modes/LockScreenSimulator';
-import { FloatingDock } from './components/Controls/FloatingDock';
 
 export const App: React.FC = () => {
   const {
@@ -86,9 +85,6 @@ export const App: React.FC = () => {
       {displayMode === 'cinema' && <CinemaMode />}
       {displayMode === 'wallpaper' && <WallpaperMode />}
       {displayMode === 'lockscreen' && <LockScreenSimulator />}
-
-      {/* Floating Glassmorphism Controller Dock */}
-      <FloatingDock />
     </div>
   );
 };
