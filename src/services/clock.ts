@@ -6,9 +6,10 @@
 export class InterpolationClock {
   private basePosition: number = 0; // seconds
   private baseTimestamp: number = 0; // performance.now()
-  private isPlaying: boolean = false;
+  private isPlaying: boolean = true;
   private playbackRate: number = 1.0;
   private readonly DRIFT_SNAP_THRESHOLD_SEC = 0.150; // 150ms threshold
+
 
   constructor() {
     this.baseTimestamp = performance.now();

@@ -123,17 +123,9 @@ final class MediaRemoteBridge {
 
             // Initial query
             self.queryMediaRemote()
-
-            // Health-check Watchdog: If no notifications arrive within 2.5s, probe AppleScript
-            self.fallbackWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
-                if self.lastMediaRemoteTimestamp == 0 {
-                    NSLog("[Cadence] MediaRemote silent on startup. Engaging dual AppleScript poller.")
-                    self.startAppleScriptPoller(interval: 1.5)
-                }
-            }
         }
     }
+
 
 
     @objc private func handleNowPlayingChangedNotification(_ notification: Notification) {

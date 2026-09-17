@@ -2,6 +2,78 @@ import ScreenSaver
 import WebKit
 import AppKit
 
+// MARK: - WKURLSchemeHandler for zero-sandbox-violation asset serving
+final class CadenceSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let distURL: URL
+
+    init(distURL: URL) {
+        self.distURL = distURL
+        super.init()
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(NSError(domain: "Cadence", code: 400, userInfo: nil))
+            return
+        }
+
+        var path = url.path
+        if path.isEmpty || path == "/" {
+            path = "/index.html"
+        }
+
+        let cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let fileURL = distURL.appendingPathComponent(cleanPath)
+
+        guard let data = try? Data(contentsOf: fileURL) else {
+            NSLog("CADENCE: Scheme 404 for path: \(cleanPath) at \(fileURL.path)")
+            urlSchemeTask.didFailWithError(NSError(domain: "Cadence", code: 404, userInfo: nil))
+            return
+        }
+
+        let mimeType: String
+        let ext = fileURL.pathExtension.lowercased()
+        switch ext {
+        case "html": mimeType = "text/html"
+        case "js", "mjs": mimeType = "application/javascript"
+        case "css": mimeType = "text/css"
+        case "woff2": mimeType = "font/woff2"
+        case "woff": mimeType = "font/woff"
+        case "svg": mimeType = "image/svg+xml"
+        case "png": mimeType = "image/png"
+        case "jpg", "jpeg": mimeType = "image/jpeg"
+        case "json": mimeType = "application/json"
+        default: mimeType = "application/octet-stream"
+        }
+
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": mimeType,
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache",
+                "Content-Length": "\(data.count)"
+            ]
+        )!
+
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+    }
+}
+
+// MARK: - JS Console Bridge to system NSLog
+final class CadenceLogHandler: NSObject, WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        NSLog("CADENCE JS LOG: \(message.body)")
+    }
+}
+
 @objc(CadenceView)
 public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     private var webView: WKWebView!
@@ -15,7 +87,6 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
 
-        // Defer WebKit initialization past init to prevent init watchdog timeout
         DispatchQueue.main.async { [weak self] in
             self?.setupView()
         }
@@ -27,7 +98,6 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
 
-        // Defer WebKit initialization past init to prevent init watchdog timeout
         DispatchQueue.main.async { [weak self] in
             self?.setupView()
         }
@@ -40,10 +110,6 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         mediaBridge?.stop()
     }
 
-    /**
-     * Prevents runningboardd from suspending the WebContent process
-     * when macOS thinks the screen saver helper is in App Nap or background.
-     */
     private func preventProcessSuspension() {
         if activityToken == nil {
             activityToken = ProcessInfo.processInfo.beginActivity(
@@ -58,36 +124,63 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         isConfigured = true
         preventProcessSuspension()
 
-
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
 
+        let bundle = Bundle(for: type(of: self))
+        let distUrl: URL
+        let bundledDist = bundle.bundleURL.appendingPathComponent("Contents/Resources/dist")
+        let userSaverDist = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Screen Savers/Cadence.saver/Contents/Resources/dist")
+
+        if FileManager.default.fileExists(atPath: bundledDist.appendingPathComponent("index.html").path) {
+            distUrl = bundledDist
+        } else if FileManager.default.fileExists(atPath: userSaverDist.appendingPathComponent("index.html").path) {
+            distUrl = userSaverDist
+        } else {
+            distUrl = bundle.resourceURL?.appendingPathComponent("dist") ?? bundledDist
+        }
+
+        NSLog("CADENCE: Serving dist from \(distUrl.path)")
+
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = false
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-
-        config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         if #available(macOS 11.0, *) {
             config.defaultWebpagePreferences.allowsContentJavaScript = true
         }
 
-        // Bridge JS console errors to system NSLog
-        let userScript = WKUserScript(
-            source: """
-            window.addEventListener('error', (e) => console.log('[Cadence JS Error]', e.message, e.filename, e.lineno));
-            """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        config.userContentController.addUserScript(userScript)
+        // 1. Register custom URL scheme handler to bypass all sandboxed file:// restrictions
+        let schemeHandler = CadenceSchemeHandler(distURL: distUrl)
+        config.setURLSchemeHandler(schemeHandler, forURLScheme: "cadence")
+
+        // 2. Add JavaScript console log bridge to system NSLog
+        let logHandler = CadenceLogHandler()
+        config.userContentController.add(logHandler, name: "cadenceLog")
+
+        let jsBridge = """
+        (function() {
+            const origLog = console.log;
+            const origErr = console.error;
+            console.log = function(...args) {
+                origLog.apply(console, args);
+                try { window.webkit.messageHandlers.cadenceLog.postMessage(args.map(String).join(' ')); } catch(_) {}
+            };
+            console.error = function(...args) {
+                origErr.apply(console, args);
+                try { window.webkit.messageHandlers.cadenceLog.postMessage('ERROR: ' + args.map(String).join(' ')); } catch(_) {}
+            };
+            window.addEventListener('error', function(e) {
+                try { window.webkit.messageHandlers.cadenceLog.postMessage('FATAL JS: ' + e.message + ' at ' + e.filename + ':' + e.lineno); } catch(_) {}
+            });
+        })();
+        """
+        config.userContentController.addUserScript(WKUserScript(source: jsBridge, injectionTime: .atDocumentStart, forMainFrameOnly: false))
 
         webView = WKWebView(frame: self.bounds, configuration: config)
         webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
         webView.setValue(true, forKey: "drawsBackground")
         webView.underPageBackgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
-
 
         // Disable scrolling bounce
         if let scrollView = webView.enclosingScrollView {
@@ -99,8 +192,10 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
         self.addSubview(webView)
 
-        // Load web application
-        loadWebApp()
+        // Load via custom origin: full CORS and ES module support without file:// sandbox blocks
+        let appURL = URL(string: "cadence://app/index.html")!
+        NSLog("CADENCE: Loading URL \(appURL.absoluteString)")
+        webView.load(URLRequest(url: appURL))
 
         // Connect native MediaRemote push update engine
         mediaBridge = MediaRemoteBridge { [weak self] payload in
@@ -115,29 +210,9 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        webView?.frame = self.bounds
-    }
-
-    private func loadWebApp() {
-        let bundle = Bundle(for: type(of: self))
-        NSLog("CADENCE: Checking bundle at \(bundle.bundlePath)")
-
-        guard let htmlURL = bundle.url(forResource: "index", withExtension: "html", subdirectory: "dist") ?? {
-            let directUrl = bundle.bundleURL.appendingPathComponent("Contents/Resources/dist/index.html")
-            if FileManager.default.fileExists(atPath: directUrl.path) { return directUrl }
-            let fallbackUrl = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Screen Savers/Cadence.saver/Contents/Resources/dist/index.html")
-            if FileManager.default.fileExists(atPath: fallbackUrl.path) { return fallbackUrl }
-            return nil
-        }() else {
-            NSLog("CADENCE: FATAL — index.html not found in bundle at \(bundle.bundlePath)")
-            return
-        }
-
-        NSLog("CADENCE: Loading from \(htmlURL.path)")
-        if htmlURL.isFileURL {
-            webView.loadFileURL(htmlURL, allowingReadAccessTo: bundle.bundleURL)
-        } else {
-            webView.load(URLRequest(url: htmlURL))
+        if window != nil {
+            setupView()
+            webView?.frame = self.bounds
         }
     }
 
@@ -155,24 +230,25 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     // MARK: - WKNavigationDelegate
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        NSLog("[Cadence] Navigation error: \(error.localizedDescription)")
+        NSLog("CADENCE: Navigation error: \(error.localizedDescription)")
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        NSLog("[Cadence] Provisional navigation error: \(error.localizedDescription)")
+        NSLog("CADENCE: Provisional navigation error: \(error.localizedDescription)")
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        NSLog("[Cadence] Web view successfully loaded and active!")
+        NSLog("CADENCE: Web view successfully loaded and active at 60fps!")
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        NSLog("[Cadence] WebContent process was terminated. Reloading webview.")
+        NSLog("CADENCE: WebContent process terminated. Reloading...")
         webView.reload()
     }
 
     public override func startAnimation() {
         super.startAnimation()
+        setupView()
         preventProcessSuspension()
     }
 
@@ -182,12 +258,10 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
 
     public override func draw(_ dirtyRect: NSRect) {
         // Intentionally empty: Do NOT call super.draw(dirtyRect) which fills the view with black!
-        // WKWebView is a layer-backed view that renders its own surface.
     }
 
     public override func animateOneFrame() {
-        // WKWebView renders via its own internal 60fps display link.
-        // Do NOT call self.needsDisplay = true, which triggers ScreenSaverView's black drawRect.
+        // Driven at 60fps by WKWebView internal display link
     }
 
     public override var hasConfigureSheet: Bool {
@@ -197,5 +271,4 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     public override var configureSheet: NSWindow? {
         return nil
     }
-
 }
