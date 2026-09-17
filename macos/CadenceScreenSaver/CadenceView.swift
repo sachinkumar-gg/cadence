@@ -7,17 +7,40 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     private var webView: WKWebView!
     private var mediaBridge: MediaRemoteBridge?
     private var isConfigured = false
+    private var activityToken: NSObjectProtocol?
 
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
         self.animationTimeInterval = 1.0 / 60.0
+        preventProcessSuspension()
         setupView()
     }
 
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
         self.animationTimeInterval = 1.0 / 60.0
+        preventProcessSuspension()
         setupView()
+    }
+
+    deinit {
+        if let token = activityToken {
+            ProcessInfo.processInfo.endActivity(token)
+        }
+        mediaBridge?.stop()
+    }
+
+    /**
+     * Prevents runningboardd from suspending the WebContent process
+     * when macOS thinks the screen saver helper is in App Nap or background.
+     */
+    private func preventProcessSuspension() {
+        if activityToken == nil {
+            activityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .idleDisplaySleepDisabled, .latencyCritical],
+                reason: "Cadence 60fps kinetic visualizer active"
+            )
+        }
     }
 
     private func setupView() {
@@ -25,17 +48,19 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         isConfigured = true
 
         self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.black.cgColor
+        self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
 
         let config = WKWebViewConfiguration()
+        config.suppressesIncrementalRendering = false
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+
         config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         if #available(macOS 11.0, *) {
             config.defaultWebpagePreferences.allowsContentJavaScript = true
         }
 
-        // Bridge console.log to system NSLog for debugging
+        // Bridge JS console errors to system NSLog
         let userScript = WKUserScript(
             source: """
             window.addEventListener('error', (e) => console.log('[Cadence JS Error]', e.message, e.filename, e.lineno));
@@ -49,6 +74,7 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
         webView.setValue(false, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0)
 
         // Disable scrolling bounce
         if let scrollView = webView.enclosingScrollView {
@@ -69,6 +95,16 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         }
     }
 
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        webView?.frame = self.bounds
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        webView?.frame = self.bounds
+    }
+
     private func loadWebApp() {
         let bundle = Bundle(for: type(of: self))
         let directUrl = bundle.bundleURL.appendingPathComponent("Contents/Resources/dist/index.html")
@@ -81,7 +117,6 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
         } else if let rootUrl = bundle.url(forResource: "index", withExtension: "html") {
             targetUrl = rootUrl
         } else {
-            // Local dev fallback
             targetUrl = URL(string: "http://127.0.0.1:5173/")!
         }
 
@@ -115,11 +150,17 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        NSLog("[Cadence] Web view successfully loaded!")
+        NSLog("[Cadence] Web view successfully loaded and active!")
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        NSLog("[Cadence] WebContent process was terminated. Reloading webview.")
+        webView.reload()
     }
 
     public override func startAnimation() {
         super.startAnimation()
+        preventProcessSuspension()
     }
 
     public override func stopAnimation() {
@@ -127,7 +168,9 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     }
 
     public override func animateOneFrame() {
-        // Driven at 60fps by WKWebView internal display link
+        // Essential: Keep the view layer dirty so runningboardd and macOS WindowServer
+        // know this view is actively rendering and do NOT suspend the WebContent process.
+        self.needsDisplay = true
     }
 
     public override var hasConfigureSheet: Bool {

@@ -145,10 +145,14 @@ final class MediaRemoteBridge {
             let isPlaying = playbackRate > 0
 
             var artworkUrl: String? = nil
-            if let artworkData = dict["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data {
-                let base64 = artworkData.base64EncodedString()
-                artworkUrl = "data:image/jpeg;base64,\(base64)"
+            if let artworkData = dict["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, !artworkData.isEmpty {
+                let tempPath = NSTemporaryDirectory() + "cadence_art.jpg"
+                let tempUrl = URL(fileURLWithPath: tempPath)
+                if (try? artworkData.write(to: tempUrl)) != nil {
+                    artworkUrl = "\(tempUrl.absoluteString)?t=\(Int(Date().timeIntervalSince1970))"
+                }
             }
+
 
             if !title.isEmpty {
                 self.lastMediaRemoteTimestamp = Date().timeIntervalSince1970
