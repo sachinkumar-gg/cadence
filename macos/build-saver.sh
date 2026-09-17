@@ -58,9 +58,10 @@ rm -rf "${OUTPUT_DIR}/${BUNDLE_NAME}/Contents/Resources/dist"
 mkdir -p "${OUTPUT_DIR}/${BUNDLE_NAME}/Contents/Resources/dist"
 cp -R "${ROOT_DIR}/dist/"* "${OUTPUT_DIR}/${BUNDLE_NAME}/Contents/Resources/dist/"
 
-# Ad-hoc code sign with entitlements
+# Ad-hoc code sign (without entitlements to prevent Launch Constraint Violation in legacyScreenSaver host)
 echo "  → Signing bundle with ad-hoc signature..."
-codesign --force --deep --sign - --entitlements "${SCRIPT_DIR}/CadenceScreenSaver/Cadence.entitlements" "${OUTPUT_DIR}/${BUNDLE_NAME}" 2>/dev/null || true
+xattr -cr "${OUTPUT_DIR}/${BUNDLE_NAME}"
+codesign --force --deep --sign - "${OUTPUT_DIR}/${BUNDLE_NAME}"
 
 # 4. Install into User Screen Savers folder
 echo ""
@@ -68,9 +69,15 @@ echo "🚀 [4/4] Installing Cadence to ~/Library/Screen Savers/..."
 mkdir -p "${USER_SAVER_DIR}"
 rm -rf "${USER_SAVER_DIR}/${BUNDLE_NAME}"
 cp -R "${OUTPUT_DIR}/${BUNDLE_NAME}" "${USER_SAVER_DIR}/"
+xattr -cr "${USER_SAVER_DIR}/${BUNDLE_NAME}"
+
+# Terminate any cached/zombie screen saver host processes
+killall -9 legacyScreenSaver 2>/dev/null || true
+killall -9 ScreenSaverEngine 2>/dev/null || true
 
 # Configure macOS to select Cadence as the active screen saver
 defaults -currentHost write com.apple.screensaver moduleDict -dict moduleName "Cadence" path "${USER_SAVER_DIR}/${BUNDLE_NAME}" type 0 2>/dev/null || true
+
 
 
 echo ""

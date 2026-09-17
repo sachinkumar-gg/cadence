@@ -12,15 +12,25 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
         self.animationTimeInterval = 1.0 / 60.0
-        preventProcessSuspension()
-        setupView()
+        self.wantsLayer = true
+        self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
+
+        // Defer WebKit initialization past init to prevent init watchdog timeout
+        DispatchQueue.main.async { [weak self] in
+            self?.setupView()
+        }
     }
 
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
         self.animationTimeInterval = 1.0 / 60.0
-        preventProcessSuspension()
-        setupView()
+        self.wantsLayer = true
+        self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor
+
+        // Defer WebKit initialization past init to prevent init watchdog timeout
+        DispatchQueue.main.async { [weak self] in
+            self?.setupView()
+        }
     }
 
     deinit {
@@ -46,6 +56,8 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate {
     private func setupView() {
         guard !isConfigured else { return }
         isConfigured = true
+        preventProcessSuspension()
+
 
         self.wantsLayer = true
         self.layer?.backgroundColor = NSColor(red: 0.02, green: 0.02, blue: 0.03, alpha: 1.0).cgColor

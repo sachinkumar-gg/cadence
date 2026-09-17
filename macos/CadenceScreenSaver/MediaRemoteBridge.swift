@@ -59,7 +59,9 @@ final class MediaRemoteBridge {
 
     init(onUpdate: @escaping MediaUpdateCallback) {
         self.updateCallback = onUpdate
-        setupMediaPipeline()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.setupMediaPipeline()
+        }
     }
 
     deinit {
@@ -67,22 +69,28 @@ final class MediaRemoteBridge {
     }
 
     public func stop() {
-        appleScriptTimer?.invalidate()
-        appleScriptTimer = nil
-        fallbackWatchdogTimer?.invalidate()
-        fallbackWatchdogTimer = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.appleScriptTimer?.invalidate()
+            self?.appleScriptTimer = nil
+            self?.fallbackWatchdogTimer?.invalidate()
+            self?.fallbackWatchdogTimer = nil
 
-        if isUsingMediaRemote, let unreg = mrUnregister {
-            unreg()
+            if let isMR = self?.isUsingMediaRemote, isMR, let unreg = self?.mrUnregister {
+                unreg()
+            }
+            if let s = self {
+                NotificationCenter.default.removeObserver(s)
+            }
         }
-        NotificationCenter.default.removeObserver(self)
     }
 
     private func setupMediaPipeline() {
         let frameworkPath = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
         guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
             NSLog("[Cadence] MediaRemote dlopen failed. Activating NSAppleScript fallback.")
-            activateAppleScriptFallback(reason: "MediaRemote framework not loadable")
+            DispatchQueue.main.async { [weak self] in
+                self?.activateAppleScriptFallback(reason: "MediaRemote framework not loadable")
+            }
             return
         }
 
@@ -90,7 +98,9 @@ final class MediaRemoteBridge {
               let getInfoSym = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo"),
               let unregSym = dlsym(handle, "MRMediaRemoteUnregisterForNowPlayingNotifications") else {
             NSLog("[Cadence] MediaRemote symbol resolution failed. Activating NSAppleScript fallback.")
-            activateAppleScriptFallback(reason: "MediaRemote symbols missing in macOS version")
+            DispatchQueue.main.async { [weak self] in
+                self?.activateAppleScriptFallback(reason: "MediaRemote symbols missing in macOS version")
+            }
             return
         }
 
@@ -98,29 +108,33 @@ final class MediaRemoteBridge {
         mrGetInfo = unsafeBitCast(getInfoSym, to: MRGetInfoFn.self)
         mrUnregister = unsafeBitCast(unregSym, to: MRUnregisterFn.self)
 
-        // Register for push notifications
+        // Register for push notifications on main queue
         mrRegister?(DispatchQueue.main)
         isUsingMediaRemote = true
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleNowPlayingChangedNotification(_:)),
-            name: NSNotification.Name("kMRMediaRemoteNowPlayingInfoDidChangeNotification"),
-            object: nil
-        )
-
-        // Initial fetch
-        queryMediaRemote()
-
-        // Health-check Watchdog: If no notifications arrive within 2.5s, probe AppleScript
-        fallbackWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+        DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if self.lastMediaRemoteTimestamp == 0 {
-                NSLog("[Cadence] MediaRemote silent on startup. Engaging dual AppleScript poller.")
-                self.startAppleScriptPoller(interval: 1.5)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(self.handleNowPlayingChangedNotification(_:)),
+                name: NSNotification.Name("kMRMediaRemoteNowPlayingInfoDidChangeNotification"),
+                object: nil
+            )
+
+            // Initial query
+            self.queryMediaRemote()
+
+            // Health-check Watchdog: If no notifications arrive within 2.5s, probe AppleScript
+            self.fallbackWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                if self.lastMediaRemoteTimestamp == 0 {
+                    NSLog("[Cadence] MediaRemote silent on startup. Engaging dual AppleScript poller.")
+                    self.startAppleScriptPoller(interval: 1.5)
+                }
             }
         }
     }
+
 
     @objc private func handleNowPlayingChangedNotification(_ notification: Notification) {
         queryMediaRemote()
