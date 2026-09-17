@@ -273,7 +273,10 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate, WKUIDelegate {
         super.stopAnimation()
     }
 
+    private var latestMediaPayload: [String: Any]?
+
     private func dispatchToWebView(payload: [String: Any]) {
+        self.latestMediaPayload = payload
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             return
@@ -309,6 +312,9 @@ public class CadenceView: ScreenSaverView, WKNavigationDelegate, WKUIDelegate {
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         NSLog("CADENCE: Web view successfully loaded and active at 60fps!")
+        if let payload = latestMediaPayload {
+            dispatchToWebView(payload: payload)
+        }
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

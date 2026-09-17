@@ -7,10 +7,13 @@ import { Music, Sparkles } from 'lucide-react';
 export const KineticStage: React.FC = () => {
   const {
     allWords,
+    lyrics,
     activeWordGlobalIndex,
+    activeLineIndex,
     player,
     settings,
     isLoadingLyrics,
+    isInstrumentalBreak,
   } = usePlayerStore();
   const { font, fontSize } = settings;
 
@@ -51,6 +54,11 @@ export const KineticStage: React.FC = () => {
   const startIndex = Math.max(0, activeWordGlobalIndex - visibleRange);
   const endIndex = Math.min(allWords.length, activeWordGlobalIndex + visibleRange + 1);
   const visibleWords = allWords.slice(startIndex, endIndex);
+
+  const isIntro = activeWordGlobalIndex === 0 && allWords.length > 0 && allWords[0].startTime > 3.0;
+  const upcomingLine = isIntro
+    ? lyrics[0]?.rawText
+    : lyrics[activeLineIndex + 1]?.rawText || (activeWordGlobalIndex < allWords.length - 1 ? lyrics[activeLineIndex]?.rawText : '');
 
   return (
     <div
@@ -112,6 +120,35 @@ export const KineticStage: React.FC = () => {
             <span className="text-xs uppercase tracking-widest text-white/50 px-3 py-1 rounded-full border border-white/20 mt-2">
               Instrumental / No synced lyrics
             </span>
+          </motion.div>
+        ) : isInstrumentalBreak ? (
+          <motion.div
+            key="instrumental-break"
+            initial={{ opacity: 0, scale: 0.92, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -10 }}
+            transition={{ duration: 0.35 }}
+            className="flex flex-col items-center justify-center gap-5 text-center px-6 z-20 max-w-xl"
+          >
+            {/* Audio Wave Equalizer Animation */}
+            <div className="flex items-center gap-1.5 h-12 px-6 py-3 rounded-full bg-white/10 border border-white/20 backdrop-blur-xl shadow-2xl">
+              <span className="w-1.5 h-5 bg-pink-400 rounded-full animate-[pulse_0.8s_ease-in-out_infinite]" />
+              <span className="w-1.5 h-9 bg-purple-400 rounded-full animate-[pulse_0.6s_ease-in-out_infinite_0.2s]" />
+              <span className="w-1.5 h-4 bg-cyan-400 rounded-full animate-[pulse_0.9s_ease-in-out_infinite_0.1s]" />
+              <span className="w-1.5 h-7 bg-white rounded-full animate-[pulse_0.7s_ease-in-out_infinite_0.3s]" />
+              <span className="w-1.5 h-5 bg-pink-400 rounded-full animate-[pulse_0.85s_ease-in-out_infinite_0.15s]" />
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-lg md:text-xl font-black text-white/90 tracking-widest uppercase">
+                {isIntro ? 'Instrumental Intro' : 'Instrumental Break'}
+              </p>
+              {upcomingLine && (
+                <p className="text-sm md:text-base text-white/50 font-medium italic max-w-md line-clamp-1">
+                  Coming up: &ldquo;{upcomingLine}&rdquo;
+                </p>
+              )}
+            </div>
           </motion.div>
         ) : (
           <div

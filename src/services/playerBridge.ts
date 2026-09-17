@@ -9,6 +9,8 @@ class PlayerBridgeService {
   private isNativeBridgeActive: boolean = false;
   private listeners: Set<PlayerCallback> = new Set();
   private reconnectTimer: any = null;
+  private latestState: PlayerState | null = null;
+  private lastTrackKey: string = '';
 
   constructor() {
     this.initNativeListener();
@@ -27,12 +29,18 @@ class PlayerBridgeService {
       if (data && typeof data === 'object') {
         this.isNativeBridgeActive = true;
         this.isConnected = true;
+        this.latestState = data;
+
+        const trackKey = `${data.title}:::${data.artist}`;
+        const isTrackChange = this.lastTrackKey !== '' && this.lastTrackKey !== trackKey;
+        this.lastTrackKey = trackKey;
 
         if (data.active) {
           globalClock.sync(
             data.position || 0,
             !!data.isPlaying,
-            data.timestamp || Date.now()
+            data.timestamp || Date.now(),
+            isTrackChange // Force snap immediately on track change
           );
         } else {
           globalClock.setPlaying(false);
@@ -105,6 +113,9 @@ class PlayerBridgeService {
 
   public subscribe(callback: PlayerCallback): () => void {
     this.listeners.add(callback);
+    if (this.latestState) {
+      callback(this.latestState);
+    }
     return () => {
       this.listeners.delete(callback);
     };

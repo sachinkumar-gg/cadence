@@ -18,6 +18,7 @@ interface PlayerStoreState {
   activeLineIndex: number;
   activeWordGlobalIndex: number;
   hasSyncedLyrics: boolean;
+  isInstrumentalBreak: boolean;
 
   palette: ColorPalette;
   settings: CalibrationSettings;
@@ -36,6 +37,58 @@ interface PlayerStoreState {
   setSpDcCookie: (cookie: string) => void;
   loadTrackLyrics: (title: string, artist: string, album?: string, duration?: number, trackId?: string) => Promise<void>;
   updatePalette: (palette: ColorPalette) => void;
+}
+
+export function computeActiveLyrics(
+  allWords: WordToken[],
+  currentTime: number,
+  offsetMs: number = 0
+): { wordIdx: number; activeLineIdx: number; isInstrumentalBreak: boolean } {
+  if (!allWords || allWords.length === 0) {
+    return { wordIdx: 0, activeLineIdx: 0, isInstrumentalBreak: false };
+  }
+
+  const calibratedTime = Math.max(0, currentTime + offsetMs / 1000);
+
+  // 1. Check if we are in an Intro Break before the first vocal line starts
+  if (calibratedTime < allWords[0].startTime - 0.4) {
+    return { wordIdx: 0, activeLineIdx: 0, isInstrumentalBreak: true };
+  }
+
+  // 2. Locate active word token
+  let wordIdx = 0;
+  for (let w = 0; w < allWords.length; w++) {
+    if (calibratedTime >= allWords[w].startTime) {
+      wordIdx = w;
+    } else {
+      break;
+    }
+  }
+
+  const currentWord = allWords[wordIdx];
+  const activeLineIdx = currentWord ? currentWord.lineIndex : 0;
+
+  // 3. Check for Interlude Breaks between vocal sections
+  let isInstrumentalBreak = false;
+  if (currentWord) {
+    const timeSinceWordEnd = calibratedTime - currentWord.endTime;
+    const nextWord = wordIdx < allWords.length - 1 ? allWords[wordIdx + 1] : null;
+
+    if (nextWord) {
+      const timeUntilNextWord = nextWord.startTime - calibratedTime;
+      // If current word ended > 0.5s ago and next word is more than 1.4s away
+      if (timeSinceWordEnd > 0.5 && timeUntilNextWord > 1.4) {
+        isInstrumentalBreak = true;
+      }
+    } else {
+      // Past the last vocal of the track
+      if (timeSinceWordEnd > 1.5) {
+        isInstrumentalBreak = true;
+      }
+    }
+  }
+
+  return { wordIdx, activeLineIdx, isInstrumentalBreak };
 }
 
 const defaultMock = MOCK_TRACKS[0];
@@ -64,6 +117,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => ({
   activeLineIndex: 0,
   activeWordGlobalIndex: 0,
   hasSyncedLyrics: true,
+  isInstrumentalBreak: false,
 
   palette: defaultMock.palette,
 
@@ -125,31 +179,28 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => ({
       activeLineIndex: 0,
       activeWordGlobalIndex: 0,
       hasSyncedLyrics: true,
+      isInstrumentalBreak: false,
     });
   },
 
   updateActiveLyrics: (currentTime) => {
-    const { allWords, settings } = get();
+    const { allWords, settings, activeWordGlobalIndex, activeLineIndex, isInstrumentalBreak } = get();
     if (!allWords || allWords.length === 0) return;
 
-    const calibratedTime = Math.max(0, currentTime + settings.offsetMs / 1000);
+    const computed = computeActiveLyrics(allWords, currentTime, settings.offsetMs);
 
-    let wordIdx = 0;
-    for (let w = 0; w < allWords.length; w++) {
-      if (calibratedTime >= allWords[w].startTime) {
-        wordIdx = w;
-      } else {
-        break;
-      }
+    // Only commit state changes when word, line, or instrumental break status actually transitions
+    if (
+      computed.wordIdx !== activeWordGlobalIndex ||
+      computed.activeLineIdx !== activeLineIndex ||
+      computed.isInstrumentalBreak !== isInstrumentalBreak
+    ) {
+      set({
+        activeWordGlobalIndex: computed.wordIdx,
+        activeLineIndex: computed.activeLineIdx,
+        isInstrumentalBreak: computed.isInstrumentalBreak,
+      });
     }
-
-    const currentWord = allWords[wordIdx];
-    const activeLineIdx = currentWord ? currentWord.lineIndex : 0;
-
-    set({
-      activeWordGlobalIndex: wordIdx,
-      activeLineIndex: activeLineIdx,
-    });
   },
 
   setOffsetMs: (offsetMs) => {
@@ -197,13 +248,16 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => ({
     if (settings.spDcCookie && trackId) {
       const spotifyResult = await fetchSpotifyOfficialLyrics(trackId, settings.spDcCookie);
       if (spotifyResult && spotifyResult.allWords.length > 0) {
+        const currentPos = globalClock.getTime();
+        const computed = computeActiveLyrics(spotifyResult.allWords, currentPos, settings.offsetMs);
         set({
           lyrics: spotifyResult.lines,
           allWords: spotifyResult.allWords,
           hasSyncedLyrics: spotifyResult.isSynced,
           isLoadingLyrics: false,
-          activeLineIndex: 0,
-          activeWordGlobalIndex: 0,
+          activeLineIndex: computed.activeLineIdx,
+          activeWordGlobalIndex: computed.wordIdx,
+          isInstrumentalBreak: computed.isInstrumentalBreak,
         });
         return;
       }
@@ -212,16 +266,19 @@ export const usePlayerStore = create<PlayerStoreState>((set, get) => ({
     // 2. Fallback to community open lyrics (LRCLIB)
     try {
       const result = await fetchLyrics(title, artist, album, duration);
+      const currentPos = globalClock.getTime();
+      const computed = computeActiveLyrics(result.allWords, currentPos, settings.offsetMs);
       set({
         lyrics: result.lines,
         allWords: result.allWords,
         hasSyncedLyrics: result.isSynced,
         isLoadingLyrics: false,
-        activeLineIndex: 0,
-        activeWordGlobalIndex: 0,
+        activeLineIndex: computed.activeLineIdx,
+        activeWordGlobalIndex: computed.wordIdx,
+        isInstrumentalBreak: computed.isInstrumentalBreak,
       });
     } catch {
-      set({ lyrics: [], allWords: [], hasSyncedLyrics: false, isLoadingLyrics: false });
+      set({ lyrics: [], allWords: [], hasSyncedLyrics: false, isLoadingLyrics: false, isInstrumentalBreak: false });
     }
   },
 

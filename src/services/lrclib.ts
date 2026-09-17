@@ -35,12 +35,11 @@ function cleanQuery(str: string): string {
 export async function fetchLyrics(
   trackName: string,
   artistName: string,
-  albumName: string = '',
+  _albumName: string = '',
   duration: number = 0
 ): Promise<CacheItem> {
   const cleanTitle = cleanQuery(trackName);
   const cleanArtist = cleanQuery(artistName).split(',')[0].split('&')[0].trim();
-  const cleanAlbum = cleanQuery(albumName);
   const roundedDuration = Math.round(duration || 0);
 
   // Keyed with rounded duration to prevent remix/live mismatch and redundant refetches
@@ -61,13 +60,12 @@ export async function fetchLyrics(
     // ignore local storage errors
   }
 
-  // Strategy 1: Exact GET with track_name, artist_name, album_name, and duration
+  // Strategy 1: Fast GET with track_name, artist_name, and duration (omitting album to avoid 404 edition mismatches)
   try {
     const params = new URLSearchParams({
       track_name: cleanTitle,
       artist_name: cleanArtist,
     });
-    if (cleanAlbum) params.set('album_name', cleanAlbum);
     if (roundedDuration > 0) params.set('duration', roundedDuration.toString());
 
     const getUrl = `https://lrclib.net/api/get?${params.toString()}`;
@@ -83,7 +81,7 @@ export async function fetchLyrics(
     // try fallback search
   }
 
-  // Strategy 2: Fuzzy Search via /api/search with duration tolerance matching (±3s)
+  // Strategy 2: Fuzzy Search via /api/search with closest duration matching
   try {
     const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanArtist} ${cleanTitle}`)}`;
     const searchRes = await fetch(searchUrl);
@@ -91,15 +89,21 @@ export async function fetchLyrics(
     if (searchRes.ok) {
       const results: LRCLibResponse[] = await searchRes.json();
       if (Array.isArray(results) && results.length > 0) {
-        // Filter or rank by closest duration if duration is known
+        // Rank candidates with synced lyrics by closest duration to current playing track
+        const syncedCandidates = results.filter((r) => !!r.syncedLyrics);
         let bestMatch: LRCLibResponse | undefined;
-        if (roundedDuration > 0) {
-          bestMatch = results.find(
-            (r) => r.syncedLyrics && Math.abs(r.duration - roundedDuration) <= 3
-          );
-        }
-        if (!bestMatch) {
-          bestMatch = results.find((r) => !!r.syncedLyrics) || results[0];
+
+        if (syncedCandidates.length > 0) {
+          if (roundedDuration > 0) {
+            syncedCandidates.sort((a, b) => {
+              const diffA = Math.abs(a.duration - roundedDuration);
+              const diffB = Math.abs(b.duration - roundedDuration);
+              return diffA - diffB;
+            });
+          }
+          bestMatch = syncedCandidates[0];
+        } else {
+          bestMatch = results[0];
         }
 
         if (bestMatch) {

@@ -161,6 +161,9 @@ export function parseLRC(
     const rawText = line.replace(timeRegex, '').trim();
     if (!rawText) continue;
 
+    // Skip lines that are just music notes / instrumental markers (e.g. ♪, ♫, ---, ...)
+    if (/^[♪♫♩♬🎵🎶\-.\s_~]+$/.test(rawText)) continue;
+
     for (const match of matches) {
       const min = parseInt(match[1], 10);
       const sec = parseInt(match[2], 10);
@@ -265,9 +268,9 @@ export function parseLRC(
         w.endTime = accumulatedTime + wordDuration;
         accumulatedTime += wordDuration;
 
-        // If last word in line, extend slightly until end of line to keep highlight steady
-        if (wIdx === wordCount - 1 && w.endTime < currentLine.endTime) {
-          w.endTime = currentLine.endTime;
+        // If last word in line, extend slightly (max 1.2s) to keep highlight steady without leaking into instrumental solos
+        if (wIdx === wordCount - 1) {
+          w.endTime = Math.min(accumulatedTime + 1.2, currentLine.endTime);
         }
       });
     }
